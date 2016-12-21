@@ -47,7 +47,8 @@ const char *tpmlib_get_blobname(uint32_t blobtype);
 TPM_RESULT tpmlib_start(struct libtpms_callbacks *cbs, uint32_t flags,
                         TPMLIB_TPMVersion tpmversion);
 int tpmlib_get_tpm_property(enum TPMLIB_TPMProperty prop);
-bool tpmlib_is_request_cancelable(const unsigned char *request, size_t req_len);
+bool tpmlib_is_request_cancelable(TPMLIB_TPMVersion tpmversion,
+                                  const unsigned char *request, size_t req_len);
 TPM_RESULT tpmlib_TpmEstablished_Reset(TPM_MODIFIER_INDICATOR *g_locty,
                                        TPM_MODIFIER_INDICATOR locty);
 
@@ -60,5 +61,9 @@ struct tpm_req_header {
 /* TPM 1.2 ordinals */
 #define TPMLIB_TPM_ORD_TakeOwnership   0x0000000d
 #define TPMLIB_TPM_ORD_CreateWrapKey   0x0000001f
+
+/* TPM 2 commands */
+#define TPMLIB_TPM2_CC_CreatePrimary   0x00000131
+#define TPMLIB_TPM2_CC_Create          0x00000153
 
 #endif /* _SWTPM_TPMLIB_H_ */
