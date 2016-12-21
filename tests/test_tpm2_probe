@@ -1,0 +1,83 @@
+#!/bin/bash
+
+# For the license, see the LICENSE file in the root directory.
+#set -x
+
+if [ "$(id -u)" -ne 0 ]; then
+	echo "Need to be root to run this test."
+	exit 77
+fi
+
+DIR=$(dirname "$0")
+ROOT=${DIR}/..
+SWTPM=swtpm_cuse
+SWTPM_EXE=$ROOT/src/swtpm/$SWTPM
+CUSE_TPM_IOCTL=$ROOT/src/swtpm_ioctl/swtpm_ioctl
+VTPM_NAME="vtpm-test-tpm2-probe"
+export TPM_PATH=$(mktemp -d)
+STATE_FILE=$TPM_PATH/tpm2-00.permall
+VOLATILE_STATE_FILE=$TPM_PATH/tpm2-00.volatilestate
+
+function cleanup()
+{
+	pid=$(ps aux | grep $SWTPM | grep -E "$VTPM_NAME\$" | gawk '{print $2}')
+	if [ -n "$pid" ]; then
+		kill -9 $pid
+	fi
+	rm -rf $TPM_PATH
+}
+
+trap "cleanup" EXIT
+
+source ${DIR}/test_cuse
+
+rm -f $STATE_FILE $VOLATILE_STATE_FILE 2>/dev/null
+
+$SWTPM_EXE --tpm2 -n $VTPM_NAME
+sleep 0.5
+PID=$(ps aux | grep $SWTPM | grep -E "$VTPM_NAME\$" | gawk '{print $2}')
+
+ps aux | grep $SWTPM | grep -v grep
+
+kill -0 $PID
+if [ $? -ne 0 ]; then
+	echo "Error: CUSE TPM did not start."
+	exit 1
+fi
+
+# Open access to the TPM
+exec 100<>/dev/$VTPM_NAME
+
+# Before TPM_INIT: Read PCR 17 -- this gives a fatal error
+#                         length         CC            count       hashalg         sz
+echo -en '\x80\x01\x00\x00\x00\x14\x00\x00\x01\x7e\x00\x00\x00\x01\x00\x0b\x03\x00\x00\x02' >&100
+RES=$(dd if=/proc/self/fd/100 2>/dev/null | od -t x1 -A n -w128)
+exp=' 80 01 00 00 00 0a 00 00 01 01'
+if [ "$RES" != "$exp" ]; then
+	echo "Error: Before TPM_INIT: Did not get expected result from TPM_PCRRead(17)"
+	echo "expected: $exp"
+	echo "received: $RES"
+	exit 1
+fi
+
+# Init the TPM
+$CUSE_TPM_IOCTL -i /dev/$VTPM_NAME
+if [ $? -ne 0 ]; then
+	echo "Error: Could not initialize the CUSE TPM."
+	exit 1
+fi
+
+# Read PCR 17 -- this should give TPM_INVALID_POSTINIT
+echo -en '\x80\x01\x00\x00\x00\x14\x00\x00\x01\x7e\x00\x00\x00\x01\x00\x0b\x03\x00\x00\x02' >&100
+RES=$(dd if=/proc/self/fd/100 2>/dev/null | od -t x1 -A n -w128)
+exp=' 80 01 00 00 00 0a 00 00 01 00'
+if [ "$RES" != "$exp" ]; then
+	echo "Error: Did not get expected result from TPM_PCRRead(17)"
+	echo "expected: $exp"
+	echo "received: $RES"
+	exit 1
+fi
+
+echo "OK"
+
+exit 0

@@ -7,7 +7,8 @@
 check_PROGRAMS =
 
 TESTS = \
-	test_vtpm_proxy
+	test_vtpm_proxy \
+	test_tpm2_vtpm_proxy
 
 if WITH_CHARDEV
 TESTS += \
@@ -31,8 +32,19 @@ TESTS += \
 	test_save_load_state \
 	test_save_load_state_2 \
 	test_swtpm_bios \
+	test_tpm_probe \
 	test_volatilestate \
-	test_wrongorder
+	test_wrongorder \
+	\
+	test_tpm2_init \
+	test_tpm2_getcap \
+	test_tpm2_locality \
+	test_tpm2_hashing \
+	test_tpm2_hashing2 \
+	test_tpm2_hashing3 \
+	test_tpm2_savestate \
+	test_tpm2_wrongorder \
+	test_tpm2_probe
 endif
 
 if WITH_SWTPM_SETUP

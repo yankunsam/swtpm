@@ -1,0 +1,170 @@
+#!/bin/bash
+
+# For the license, see the LICENSE file in the root directory.
+#set -x
+
+if [ "$(id -u)" -ne 0 ]; then
+	echo "Need to be root to run this test."
+	exit 77
+fi
+
+DIR=$(dirname "$0")
+ROOT=${DIR}/..
+SWTPM=swtpm_cuse
+SWTPM_EXE=$ROOT/src/swtpm/$SWTPM
+CUSE_TPM_IOCTL=$ROOT/src/swtpm_ioctl/swtpm_ioctl
+VTPM_NAME="vtpm-test-tpm2-savestate"
+export TPM_PATH=$(mktemp -d)
+STATE_FILE=$TPM_PATH/tpm2-00.permall
+VOLATILE_STATE_FILE=$TPM_PATH/tpm2-00.volatilestate
+
+function cleanup()
+{
+	pid=$(ps aux | grep $SWTPM | grep -E "$VTPM_NAME\$" | gawk '{print $2}')
+	if [ -n "$pid" ]; then
+		kill -9 $pid
+	fi
+	rm -rf $TPM_PATH
+}
+
+trap "cleanup" EXIT
+
+ECHO=`which echo`
+if [ -z "$ECHO" ]; then
+	echo "Error: Could not find external echo tool."
+	exit 1
+fi
+
+source ${DIR}/test_cuse
+
+rm -f $STATE_FILE $VOLATILE_STATE_FILE 2>/dev/null
+
+$SWTPM_EXE --tpm2 -n $VTPM_NAME
+sleep 0.5
+PID=$(ps aux | grep $SWTPM | grep -E "$VTPM_NAME\$" | gawk '{print $2}')
+
+ps aux | grep $SWTPM | grep -v grep
+
+kill -0 $PID
+if [ $? -ne 0 ]; then
+	echo "Error: CUSE TPM did not start."
+	exit 1
+fi
+
+# Init the TPM
+$CUSE_TPM_IOCTL -i /dev/$VTPM_NAME
+if [ $? -ne 0 ]; then
+	echo "Error: Could not initialize the CUSE TPM."
+	exit 1
+fi
+
+kill -0 $PID 2>/dev/null
+if [ $? -ne 0 ]; then
+	echo "Error: CUSE TPM not running anymore after INIT."
+	exit 1
+fi
+
+# Startup the TPM2
+exec 100<>/dev/$VTPM_NAME
+$ECHO -en '\x80\x01\x00\x00\x00\x0c\x00\x00\x01\x44\x00\x00' >&100
+RES=$(dd if=/proc/self/fd/100 2>/dev/null | od -t x1 -A n)
+exp=' 80 01 00 00 00 0a 00 00 00 00'
+if [ "$RES" != "$exp" ]; then
+	echo "Error: Did not get expected result from TPM2_Startup(SU_Clear)"
+	echo "expected: $exp"
+	echo "received: $RES"
+	exit 1
+fi
+
+# Extend PCR 10
+req='\x80\x02\x00\x00\x00\x41\x00\x00\x01\x82\x00\x00\x00\x0a\x00\x00'
+req+='\x00\x09\x40\x00\x00\x09\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00'
+req+='\x0b\x68\x65\x6c\x6c\x6f\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
+req+='\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
+req+='\x00'
+$ECHO -en $req >&100
+RES=$(dd if=/proc/self/fd/100 2>/dev/null | od -t x1 -A n -w128)
+exp=' 80 02 00 00 00 13 00 00 00 00 00 00 00 00 00 00 01 00 00'
+if [ "$RES" != "$exp" ]; then
+	echo "Error: Did not get expected result from TPM2_PCR_Extend(10)"
+	echo "expected: $exp"
+	echo "received: $RES"
+	exit 1
+fi
+
+# Read PCR 10
+#                         length         CC            count       hashalg         sz
+$ECHO -en '\x80\x01\x00\x00\x00\x14\x00\x00\x01\x7e\x00\x00\x00\x01\x00\x0b\x03\x00\x04\x00' >&100
+RES=$(dd if=/proc/self/fd/100 2>/dev/null | od -t x1 -A n -w128)
+exp=' 80 01 00 00 00 3e 00 00 00 00 00 00 00 16 00 00 00 01 00 0b 03 00 04 00 00 00 00 01 00 20 c3 ba a5 62 69 08 26 72 c3 db 3d 11 0a 10 74 a1 a7 a6 ea 43 e8 82 16 1a af 4b ea a6 83 17 e4 b8'
+if [ "$RES" != "$exp" ]; then
+	echo "Error: (1) Did not get expected result from TPM2_PCRRead(10)"
+	echo "expected: $exp"
+	echo "received: $RES"
+	exit 1
+fi
+
+# Shutdown(SU_STATE)
+$ECHO -en '\x80\x01\x00\x00\x00\x0c\x00\x00\x01\x45\x00\x01' >&100
+RES=$(dd if=/proc/self/fd/100 2>/dev/null | od -t x1 -A n -w128)
+exp=' 80 01 00 00 00 0a 00 00 00 00'
+if [ "$RES" != "$exp" ]; then
+	echo "Error: (1) Did not get expected result from TPM2_Shutdown(SU_STATE)"
+	echo "expected: $exp"
+	echo "received: $RES"
+	exit 1
+fi
+
+# Init the TPM
+$CUSE_TPM_IOCTL -i /dev/$VTPM_NAME
+if [ $? -ne 0 ]; then
+	echo "Error: Could not initialize the CUSE TPM."
+	exit 1
+fi
+
+# Startup(SU_STATE) the TPM2
+exec 100<>/dev/$VTPM_NAME
+$ECHO -en '\x80\x01\x00\x00\x00\x0c\x00\x00\x01\x44\x00\x01' >&100
+RES=$(dd if=/proc/self/fd/100 2>/dev/null | od -t x1 -A n)
+exp=' 80 01 00 00 00 0a 00 00 00 00'
+if [ "$RES" != "$exp" ]; then
+	echo "Error: Did not get expected result from TPM2_Startup(SU_State)"
+	echo "expected: $exp"
+	echo "received: $RES"
+	exit 1
+fi
+
+# Read PCR 10
+#                         length         CC            count       hashalg         sz
+$ECHO -en '\x80\x01\x00\x00\x00\x14\x00\x00\x01\x7e\x00\x00\x00\x01\x00\x0b\x03\x00\x04\x00' >&100
+RES=$(dd if=/proc/self/fd/100 2>/dev/null | od -t x1 -A n -w128)
+exp=' 80 01 00 00 00 3e 00 00 00 00 00 00 00 1b 00 00 00 01 00 0b 03 00 04 00 00 00 00 01 00 20 c3 ba a5 62 69 08 26 72 c3 db 3d 11 0a 10 74 a1 a7 a6 ea 43 e8 82 16 1a af 4b ea a6 83 17 e4 b8'
+if [ "$RES" != "$exp" ]; then
+	echo "Error: (2) Did not get expected result from TPM2_PCR_Read(10)"
+	echo "expected: $exp"
+	echo "received: $RES"
+	exit 1
+fi
+
+$CUSE_TPM_IOCTL -s /dev/$VTPM_NAME
+if [ $? -ne 0 ]; then
+	echo "Error: Could not shut down the CUSE TPM."
+	exit 1
+fi
+
+sleep 0.5
+
+kill -0 $PID 2>/dev/null
+if [ $? -eq 0 ]; then
+	echo "Error: CUSE TPM should not be running anymore."
+	exit 1
+fi
+
+if [ ! -e $STATE_FILE ]; then
+	echo "Error: TPM state file $STATE_FILE does not exist."
+	exit 1
+fi
+
+echo "OK"
+
+exit 0
