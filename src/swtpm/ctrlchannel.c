@@ -208,7 +208,8 @@ int ctrlchannel_process_fd(int fd,
                            struct libtpms_callbacks *cbs,
                            bool *terminate,
                            TPM_MODIFIER_INDICATOR *locality,
-                           bool *tpm_running)
+                           bool *tpm_running,
+                           TPMLIB_TPMVersion tpmversion)
 {
     struct input {
         uint32_t cmd;
@@ -255,18 +256,36 @@ int ctrlchannel_process_fd(int fd,
 
     switch (be32toh(input.cmd)) {
     case CMD_GET_CAPABILITY:
-        *ptm_caps = htobe64(
-            PTM_CAP_INIT |
-            PTM_CAP_SHUTDOWN |
-            PTM_CAP_STOP |
-            PTM_CAP_GET_TPMESTABLISHED |
-            PTM_CAP_SET_LOCALITY |
-            PTM_CAP_RESET_TPMESTABLISHED |
-            PTM_CAP_HASHING |
-            PTM_CAP_GET_STATEBLOB |
-            PTM_CAP_SET_STATEBLOB |
-            PTM_CAP_CANCEL_TPM_CMD |
-            PTM_CAP_STORE_VOLATILE);
+        switch (tpmversion) {
+        case TPMLIB_TPM_VERSION_2:
+            *ptm_caps = htobe64(
+                PTM_CAP_INIT
+                | PTM_CAP_SHUTDOWN
+                | PTM_CAP_STOP
+                | PTM_CAP_GET_TPMESTABLISHED
+                | PTM_CAP_SET_LOCALITY
+                //| PTM_CAP_RESET_TPMESTABLISHED
+                | PTM_CAP_HASHING
+                //| PTM_CAP_GET_STATEBLOB
+                //| PTM_CAP_SET_STATEBLOB
+                //| PTM_CAP_CANCEL_TPM_CMD
+                //| PTM_CAP_STORE_VOLATILE
+            );
+            break;
+        case TPMLIB_TPM_VERSION_1_2:
+            *ptm_caps = htobe64(
+                PTM_CAP_INIT
+                | PTM_CAP_SHUTDOWN
+                | PTM_CAP_STOP
+                | PTM_CAP_GET_TPMESTABLISHED
+                | PTM_CAP_SET_LOCALITY
+                | PTM_CAP_RESET_TPMESTABLISHED
+                | PTM_CAP_HASHING
+                | PTM_CAP_GET_STATEBLOB
+                | PTM_CAP_SET_STATEBLOB
+                | PTM_CAP_CANCEL_TPM_CMD
+                | PTM_CAP_STORE_VOLATILE);
+        }
 
         out_len = sizeof(*ptm_caps);
         break;
@@ -280,7 +299,8 @@ int ctrlchannel_process_fd(int fd,
         TPMLIB_Terminate();
 
         *tpm_running = false;
-        res = tpmlib_start(cbs, be32toh(init_p->u.req.init_flags));
+        res = tpmlib_start(cbs, be32toh(init_p->u.req.init_flags),
+                           tpmversion);
         if (res) {
             logprintf(STDERR_FILENO,
                       "Error: Could not initialize the TPM\n");

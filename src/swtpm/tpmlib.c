@@ -69,13 +69,20 @@ const char *tpmlib_get_blobname(uint32_t blobtype)
     }
 }
 
-TPM_RESULT tpmlib_start(struct libtpms_callbacks *cbs, uint32_t flags)
+TPM_RESULT tpmlib_start(struct libtpms_callbacks *cbs, uint32_t flags,
+                        TPMLIB_TPMVersion tpmversion)
 {
     TPM_RESULT res;
 
     if ((res = TPMLIB_RegisterCallbacks(cbs)) != TPM_SUCCESS) {
         logprintf(STDERR_FILENO,
                   "Error: Could not register the callbacks.\n");
+        return res;
+    }
+
+    if ((res = TPMLIB_ChooseTPMVersion(tpmversion)) != TPM_SUCCESS) {
+        logprintf(STDERR_FILENO,
+                  "Error: Could not choose TPM 2 implementation.\n");
         return res;
     }
 

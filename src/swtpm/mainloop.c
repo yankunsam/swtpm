@@ -198,7 +198,8 @@ int mainLoop(struct mainLoopParams *mlp,
             if (pollfds[3].revents & POLLIN) {
                 ctrlclntfd = ctrlchannel_process_fd(ctrlclntfd, callbacks,
                                                     &mainloop_terminate,
-                                                    &locality, &tpm_running);
+                                                    &locality, &tpm_running,
+                                                    mlp->tpmversion);
                 if (mainloop_terminate)
                     break;
             }

@@ -49,6 +49,7 @@ int ctrlchannel_process_fd(int fd,
                            struct libtpms_callbacks *cbs,
                            bool *terminate,
                            TPM_MODIFIER_INDICATOR *locality,
-                           bool *tpm_running);
+                           bool *tpm_running,
+                           TPMLIB_TPMVersion tpmversion);
 
 #endif /* _SWTPM_CTRLCHANNEL_H_ */
