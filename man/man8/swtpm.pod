@@ -160,7 +160,7 @@ For the socket interface, this option automatically assumes -t.
 
 Daemonize the process.
 
-=item B<--ctrl type=[unixio|tcp][,path=E<lt>pathE<gt>][,port=E<lt>portE<gt>[,bindaddress=E<lt>addressE<gt>[,ifname=E<lt>ifnameE<gt>]]][,fd=E<lt>filedescriptorE<gt>] >
+=item B<--ctrl type=[unixio|tcp][,path=E<lt>pathE<gt>][,port=E<lt>portE<gt>[,bindaddress=E<lt>addressE<gt>[,ifname=E<lt>ifnameE<gt>]]][,fd=E<lt>filedescriptorE<gt>|clientfd=E<lt>filedescriptorE<gt>] >
 
 This option adds a control channel to the TPM. The control channel can either use a UnixIO socket with
 a given I<path> or I<filedescriptor> or it can use a TCP socket on the given I<port> or I<filedescriptor>.
@@ -184,13 +184,15 @@ The following options are support by all interfaces:
 
 Use the given path rather than using the environment variable TPM_PATH.
 
-=item B<--log [fd=E<lt>fdE<gt>|file=E<lt>pathE<gt>][,level=E<lt>nE<gt>]>
+=item B<--log [fd=E<lt>fdE<gt>|file=E<lt>pathE<gt>][,level=E<lt>nE<gt>]>[,prefix=E<lt>prefixE<gt>]
 
 Enable logging to a file given its file descriptor or its path. Use '-' for path to
 suppress the logging.
 
 The level parameter allows to choose the level of logging. Starting at log
 level 5, libtpms debug logging is activated.
+
+All logged lines will be prefixed with prefix. By default no prefix is prepended.
 
 =item B<--key file=E<lt>keyfileE<gt>[,format=E<lt>hex|binaryE<gt>][,mode=aes-cbc],[remove[=true|false]]>
 

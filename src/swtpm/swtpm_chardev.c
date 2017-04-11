@@ -99,14 +99,15 @@ static int create_vtpm_proxy(struct vtpm_proxy_new_dev *vtpm_new_dev)
 
     fd = open("/dev/vtpmx", O_RDWR);
     if (fd < 0) {
-        fprintf(stderr, "Could not open /dev/vtpmx: %s\n", strerror(errno));
+        logprintf(STDERR_FILENO, "Could not open /dev/vtpmx: %s\n",
+                  strerror(errno));
         return -1;
     }
 
     n = ioctl(fd, VTPM_PROXY_IOC_NEW_DEV, vtpm_new_dev);
     if (n) {
-        fprintf(stderr, "Ioctl to create vtpm proxy failed: %s\n",
-                strerror(errno));
+        logprintf(STDERR_FILENO, "Ioctl to create vtpm proxy failed: %s\n",
+                  strerror(errno));
         ret = -1;
     }
     close(fd);
@@ -126,16 +127,22 @@ static void usage(FILE *file, const char *prgname, const char *iface)
     "                 : use the given character device\n"
     "-f|--fd <fd>     : use the given character device file descriptor\n"
     "-d|--daemon      : daemonize the TPM\n"
-    "--ctrl type=[unixio|tcp][,path=<path>][,port=<port>[,bindaddr=address[,ifname=ifname]]][,fd=<filedescriptor]\n"
+    "--ctrl type=[unixio|tcp][,path=<path>][,port=<port>[,bindaddr=address[,ifname=ifname]]][,fd=<filedescriptor|clientfd=<filedescriptor>]\n"
     "                 : TPM control channel using either UnixIO or TCP sockets;\n"
     "                   the path is only valid for Unixio channels; the port must\n"
     "                   be given in case the type is TCP; the TCP socket is bound\n"
     "                   to 127.0.0.1 by default and other bind addresses can be\n"
-    "                   given with the bindaddr parameter\n"
-    "--log file=<path>|fd=<filedescriptor>[,level=n]\n"
+    "                   given with the bindaddr parameter; if fd is provided,\n"
+    "                   it will be treated as a server socket and used for \n"
+    "                   accepting client connections; if clientfd is provided,\n"
+    "                   it will be treaded as client connection;\n"
+    "                   NOTE: fd and clientfd are mutually exclusive and \n"
+    "                   clientfd is only valid for UnixIO channels\n"
+    "--log file=<path>|fd=<filedescriptor>[,level=n][,prefix=<prefix>]\n"
     "                 : write the TPM's log into the given file rather than\n"
     "                   to the console; provide '-' for path to avoid logging\n"
-    "                   log level 5 and higher will enable libtpms logging\n"
+    "                   log level 5 and higher will enable libtpms logging;\n"
+    "                   all logged output will be prefixed with prefix\n"
     "--key file=<path>[,mode=aes-cbc][,format=hex|binary][,remove=[true|false]]\n"
     "                 : use an AES key for the encryption of the TPM's state\n"
     "                   files; use the given mode for the block encryption;\n"
@@ -168,6 +175,7 @@ int swtpm_chardev_main(int argc, char **argv, const char *prgname, const char *i
     int opt, longindex;
     struct stat statbuf;
     struct mainLoopParams mlp = {
+        .cc = NULL,
         .fd = -1,
         .flags = 0,
     };
@@ -202,6 +210,8 @@ int swtpm_chardev_main(int argc, char **argv, const char *prgname, const char *i
         {NULL        , 0                , 0, 0  },
     };
 
+    log_set_prefix("swtpm: ");
+
     while (TRUE) {
         opt = getopt_long(argc, argv, "dhc:f:r:", longopts, &longindex);
 
@@ -219,8 +229,8 @@ int swtpm_chardev_main(int argc, char **argv, const char *prgname, const char *i
 
             mlp.fd = open(optarg, O_RDWR);
             if (mlp.fd < 0) {
-                fprintf(stderr, "Cannot open %s: %s\n",
-                        optarg, strerror(errno));
+                logprintf(STDERR_FILENO, "Cannot open %s: %s\n",
+                          optarg, strerror(errno));
                 exit(1);
             }
             mlp.flags |= MAIN_LOOP_FLAG_TERMINATE | MAIN_LOOP_FLAG_USE_FD |
@@ -235,13 +245,14 @@ int swtpm_chardev_main(int argc, char **argv, const char *prgname, const char *i
             errno = 0;
             val = strtoul(optarg, &end_ptr, 10);
             if (val != (unsigned int)val || errno || end_ptr[0] != '\0') {
-                fprintf(stderr, "Cannot parse character device file descriptor.\n");
+                logprintf(STDERR_FILENO,
+                          "Cannot parse character device file descriptor.\n");
                 exit(1);
             }
             mlp.fd = val;
             if (fstat(mlp.fd, &statbuf) != 0) {
-                fprintf(stderr, "Cannot stat file descriptor: %s\n",
-                        strerror(errno));
+                logprintf(STDERR_FILENO, "Cannot stat file descriptor: %s\n",
+                          strerror(errno));
                 exit(1);
             }
             /*
@@ -250,8 +261,8 @@ int swtpm_chardev_main(int argc, char **argv, const char *prgname, const char *i
              */
             if (S_ISREG(statbuf.st_mode) || S_ISDIR(statbuf.st_mode) || S_ISBLK(statbuf.st_mode)
                 || S_ISLNK(statbuf.st_mode)) {
-                fprintf(stderr,
-                        "Given file descriptor type is not supported.\n");
+                logprintf(STDERR_FILENO,
+                          "Given file descriptor type is not supported.\n");
                 exit(1);
             }
             mlp.flags |= MAIN_LOOP_FLAG_TERMINATE | MAIN_LOOP_FLAG_USE_FD |
@@ -307,7 +318,8 @@ int swtpm_chardev_main(int argc, char **argv, const char *prgname, const char *i
         };
 
         if (mlp.fd >= 0) {
-            fprintf(stderr, "Cannot use vTPM proxy with a provided device.\n");
+            logprintf(STDERR_FILENO,
+                      "Cannot use vTPM proxy with a provided device.\n");
             exit(1);
         }
         if (create_vtpm_proxy(&vtpm_new_dev))
@@ -325,7 +337,8 @@ int swtpm_chardev_main(int argc, char **argv, const char *prgname, const char *i
 #endif
 
     if (mlp.fd < 0) {
-        logprintf(STDERR_FILENO, "Error: Missing character device or file descriptor\n");
+        logprintf(STDERR_FILENO,
+                  "Error: Missing character device or file descriptor\n");
         return EXIT_FAILURE;
     }
 
@@ -339,18 +352,19 @@ int swtpm_chardev_main(int argc, char **argv, const char *prgname, const char *i
         handle_key_options(keydata) < 0 ||
         handle_pid_options(piddata) < 0 ||
         handle_tpmstate_options(tpmstatedata) < 0 ||
-        handle_ctrlchannel_options(ctrlchdata, &mlp.cc) < 0)
-        return EXIT_FAILURE;
+        handle_ctrlchannel_options(ctrlchdata, &mlp.cc) < 0) {
+        goto exit_failure;
+    }
 
     if (daemonize) {
        if (0 != daemon(0, 0)) {
            logprintf(STDERR_FILENO, "Error: Could not daemonize.\n");
-           return EXIT_FAILURE;
+           goto exit_failure;
        }
     }
 
     if (pidfile_write(getpid()) < 0) {
-        return EXIT_FAILURE;
+        goto exit_failure;
     }
 
     setvbuf(stdout, 0, _IONBF, 0);      /* output may be going through pipe */
@@ -414,4 +428,9 @@ error_no_tpm:
         TPM_DEBUG("main: TPM initialization failure %08x, exiting\n", rc);
         return EXIT_FAILURE;
     }
+
+exit_failure:
+    free(mlp.cc);
+
+    return EXIT_FAILURE;
 }

@@ -60,9 +60,10 @@
 
 struct ctrlchannel {
     int fd;
+    int clientfd;
 };
 
-struct ctrlchannel *ctrlchannel_new(int fd)
+struct ctrlchannel *ctrlchannel_new(int fd, bool is_client)
 {
     struct ctrlchannel *cc = malloc(sizeof(struct ctrlchannel));
 
@@ -71,7 +72,12 @@ struct ctrlchannel *ctrlchannel_new(int fd)
         return NULL;
     }
 
-    cc->fd = fd;
+    cc->fd = cc->clientfd = -1;
+    if (is_client)
+        cc->clientfd = fd;
+    else
+        cc->fd = fd;
+
     return cc;
 }
 
@@ -83,14 +89,22 @@ int ctrlchannel_get_fd(struct ctrlchannel *cc)
     return cc->fd;
 }
 
+int ctrlchannel_get_client_fd(struct ctrlchannel *cc)
+{
+    if (!cc)
+        return -1;
+
+    return cc->clientfd;
+}
+
 static int ctrlchannel_return_state(ptm_getstate *pgs, int fd)
 {
     uint32_t blobtype = be32toh(pgs->u.req.type);
     const char *blobname = tpmlib_get_blobname(blobtype);
     uint32_t tpm_number = 0;
     unsigned char *blob;
-    uint32_t blob_length, return_length;
-    TPM_BOOL is_encrypted;
+    uint32_t blob_length = 0, return_length;
+    TPM_BOOL is_encrypted = 0;
     TPM_BOOL decrypt =
         (be32toh(pgs->u.req.state_flags) & PTM_STATE_FLAG_DECRYPTED) != 0;
     TPM_RESULT res = 0;
@@ -126,7 +140,7 @@ static int ctrlchannel_return_state(ptm_getstate *pgs, int fd)
 
     iov[0].iov_base = &pgs_res;
     iov[0].iov_len = offsetof(ptm_getstate, u.resp.data);
-    iovcnt = -1;
+    iovcnt = 1;
 
     if (res == 0 && return_length) {
         iov[1].iov_base = &blob[offset];
@@ -204,6 +218,24 @@ err_fd_broken:
     return fd;
 }
 
+/*
+ * ctrlchannel_process_fd: Read command from control channel and execute it
+ *
+ * @fd: file descriptor for control channel
+ * @cbs: callback functions; needed in case of CMD_INIT
+ * @terminate: pointer to a boolean that will be set to true by this
+ *             function in case the process should shut down; CMD_SHUTDOWN
+ *             will set this
+ * @locality: pointer to locality identifier that must point to the global
+ *            locality variable and that will receive the new locality
+ *            number when set via CMD_SET_LOCALITY
+ * @tpm_running: indicates whether the TPM is running; may be changed by
+ *               this function in case TPM is stopped or started
+ * @tpmversion: the emulated TPM's version
+ *
+ * This function returns the passed file descriptor or -1 in case the
+ * file descriptor was closed.
+ */
 int ctrlchannel_process_fd(int fd,
                            struct libtpms_callbacks *cbs,
                            bool *terminate,

@@ -64,6 +64,7 @@
 #include <libtpms/tpm_error.h>
 #include <libtpms/tpm_types.h>
 
+#include "logging.h"
 #include "swtpm_debug.h"
 #include "swtpm_io.h"
 
@@ -142,7 +143,8 @@ TPM_RESULT SWTPM_IO_Read(TPM_CONNECTION_FD *connection_fd,   /* read/write file 
         rc = SWTPM_IO_ReadBytes(connection_fd, buffer, headerSize);
     }
     if (rc == 0) {
-        TPM_PrintAll("  SWTPM_IO_Read: through paramSize", buffer, headerSize);
+        TPM_PrintAll("  SWTPM_IO_Read: through paramSize", "  ",
+                     buffer, headerSize);
         /* extract the paramSize value, last field in header */
         paramSize = LOAD32(buffer, headerSize - sizeof(uint32_t));
         *bufferLength = headerSize + paramSize - (sizeof(TPM_TAG) + sizeof(uint32_t));
@@ -161,7 +163,7 @@ TPM_RESULT SWTPM_IO_Read(TPM_CONNECTION_FD *connection_fd,   /* read/write file 
 
 out:
     if (rc == 0) {
-        TPM_PrintAll(" SWTPM_IO_Read:", buffer, *bufferLength);
+        TPM_PrintAll(" SWTPM_IO_Read:", " ", buffer, *bufferLength);
     }
     return rc;
 }
@@ -203,9 +205,9 @@ TPM_RESULT SWTPM_IO_Init(void)
     if (rc == 0) {
         port_str = getenv("TPM_PORT");
         if (port_str == NULL) {
-            fprintf(stderr,
-                    "SWTPM_IO_Init: Error, TPM_PORT environment variable not "
-                    "set\n");
+            logprintf(STDERR_FILENO,
+                      "SWTPM_IO_Init: Error, TPM_PORT environment variable not "
+                      "set\n");
             rc = TPM_IOERROR;
         }
     }
@@ -213,9 +215,9 @@ TPM_RESULT SWTPM_IO_Init(void)
     if (rc == 0) {
         irc = sscanf(port_str, "%hu", &port);
         if (irc != 1) {
-            fprintf(stderr,
-                    "SWTPM_IO_Init: Error, TPM_PORT environment variable "
-                    "invalid\n");
+            logprintf(STDERR_FILENO,
+                      "SWTPM_IO_Init: Error, TPM_PORT environment variable "
+                      "invalid\n");
             rc = TPM_IOERROR;
         }
     }
@@ -225,8 +227,9 @@ TPM_RESULT SWTPM_IO_Init(void)
                                         port,
                                         INADDR_ANY);
         if (rc != 0) {
-            fprintf(stderr, "SWTPM_IO_Init: Warning, could not open TCP/IP "
-                    "server socket.\n");
+            logprintf(STDERR_FILENO,
+                      "SWTPM_IO_Init: Warning, could not open TCP/IP "
+                      "server socket.\n");
         }
     }
 
@@ -274,9 +277,9 @@ static TPM_RESULT SWTPM_IO_ServerSocket_Open(int *sock_fd,
         irc = setsockopt(*sock_fd, SOL_SOCKET, SO_REUSEADDR, &opt,
                          sizeof(opt));
         if (irc != 0) {
-            fprintf(stderr,
-                    "SWTPM_IO_ServerSocket_Open: Error, server setsockopt() "
-                    "%d %s\n", errno, strerror(errno));
+            logprintf(STDERR_FILENO,
+                      "SWTPM_IO_ServerSocket_Open: Error, server setsockopt() "
+                      "%d %s\n", errno, strerror(errno));
             rc = TPM_IOERROR;
         }
     }
@@ -287,9 +290,9 @@ static TPM_RESULT SWTPM_IO_ServerSocket_Open(int *sock_fd,
         if (irc != 0) {
             close(*sock_fd);
             *sock_fd = -1;
-            fprintf(stderr,
-                    "SWTPM_IO_ServerSocket_Open: Error, server bind() %d "
-                    "%s\n", errno, strerror(errno));
+            logprintf(STDERR_FILENO,
+                      "SWTPM_IO_ServerSocket_Open: Error, server bind() %d "
+                      "%s\n", errno, strerror(errno));
             rc = TPM_IOERROR;
         }
     }
@@ -299,9 +302,9 @@ static TPM_RESULT SWTPM_IO_ServerSocket_Open(int *sock_fd,
         if (irc != 0) {
             close(*sock_fd);
             *sock_fd = -1;
-            fprintf(stderr,
-                    "SWTPM_IO_ServerSocket_Open: Error, server listen() %d "
-                    "%s\n", errno, strerror(errno));
+            logprintf(STDERR_FILENO,
+                      "SWTPM_IO_ServerSocket_Open: Error, server listen() %d "
+                      "%s\n", errno, strerror(errno));
             rc = TPM_IOERROR;
         }
     }
@@ -350,9 +353,9 @@ TPM_RESULT SWTPM_IO_Connect(TPM_CONNECTION_FD *connection_fd,     /* read/write 
             TPM_DEBUG("\n SWTPM_IO_Connect: Accepting connection from port %s ...\n", port_str);
             connection_fd->fd = accept(sock_fd, (struct sockaddr *)&cli_addr, &cli_len);
             if (connection_fd->fd < 0) {
-                fprintf(stderr,
-                        "SWTPM_IO_Connect: Error, accept() %d %s\n",
-                        errno, strerror(errno));
+                logprintf(STDERR_FILENO,
+                          "SWTPM_IO_Connect: Error, accept() %d %s\n",
+                          errno, strerror(errno));
                 rc = TPM_IOERROR;
             }
             break;
@@ -405,7 +408,7 @@ static TPM_RESULT SWTPM_IO_ReadBytes(TPM_CONNECTION_FD *connection_fd,    /* rea
     }
 
     if (rc == 0) {
-        TPM_PrintAll(" SWTPM_IO_ReadBytes:", start, nbytes - nleft);
+        TPM_PrintAll(" SWTPM_IO_ReadBytes:", " ", start, nbytes - nleft);
     }
 
     return rc;
@@ -424,7 +427,7 @@ TPM_RESULT SWTPM_IO_Write(TPM_CONNECTION_FD *connection_fd,       /* read/write 
     ssize_t     nwritten = 0;
 
     if (rc == 0) {
-        TPM_PrintAll(" SWTPM_IO_Write:", buffer, buffer_length);
+        TPM_PrintAll(" SWTPM_IO_Write:", " ", buffer, buffer_length);
     }
     /* write() is unspecified with buffer_length too large */
     if (rc == 0) {
@@ -435,9 +438,9 @@ TPM_RESULT SWTPM_IO_Write(TPM_CONNECTION_FD *connection_fd,       /* read/write 
     /* test that connection is open to write */
     if (rc == 0) {
         if (connection_fd->fd < 0) {
-            fprintf(stderr,
-                    "SWTPM_IO_Write: Error, connection not open, fd %d\n",
-                   connection_fd->fd);
+            logprintf(STDERR_FILENO,
+                      "SWTPM_IO_Write: Error, connection not open, fd %d\n",
+                      connection_fd->fd);
             rc = TPM_IOERROR;
         }
     }
@@ -448,8 +451,8 @@ TPM_RESULT SWTPM_IO_Write(TPM_CONNECTION_FD *connection_fd,       /* read/write 
             buffer += nwritten;
         }
         else {
-            fprintf(stderr, "SWTPM_IO_Write: Error, write() %d %s\n",
-                    errno, strerror(errno));
+            logprintf(STDERR_FILENO, "SWTPM_IO_Write: Error, write() %d %s\n",
+                      errno, strerror(errno));
             rc = TPM_IOERROR;
         }
     }

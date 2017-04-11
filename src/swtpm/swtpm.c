@@ -47,6 +47,8 @@
 #include <poll.h>
 #include <sys/stat.h>
 #include <stdbool.h>
+#include <sys/types.h>
+#include <sys/socket.h>
 
 #include <libtpms/tpm_error.h>
 #include <libtpms/tpm_library.h>
@@ -98,16 +100,22 @@ static void usage(FILE *file, const char *prgname, const char *iface)
     "-f|--fd <fd>     : use the given socket file descriptor\n"
     "-t|--terminate   : terminate the TPM once a connection has been lost\n"
     "-d|--daemon      : daemonize the TPM\n"
-    "--ctrl type=[unixio|tcp][,path=<path>][,port=<port>[,bindaddr=address[,ifname=ifname]]][,fd=<filedescriptor]\n"
+    "--ctrl type=[unixio|tcp][,path=<path>][,port=<port>[,bindaddr=address[,ifname=ifname]]][,fd=<filedescriptor>|clientfd=<filedescriptor>]\n"
     "                 : TPM control channel using either UnixIO or TCP sockets;\n"
     "                   the path is only valid for Unixio channels; the port must\n"
     "                   be given in case the type is TCP; the TCP socket is bound\n"
     "                   to 127.0.0.1 by default and other bind addresses can be\n"
-    "                   given with the bindaddr parameter\n"
-    "--log file=<path>|fd=<filedescriptor>[,level=n]\n"
+    "                   given with the bindaddr parameter; if fd is provided,\n"
+    "                   it will be treated as a server socket and used for \n"
+    "                   accepting client connections; if clientfd is provided,\n"
+    "                   it will be treaded as client connection;\n"
+    "                   NOTE: fd and clientfd are mutually exclusive and clientfd\n"
+    "                   is only valid for UnixIO channels\n"
+    "--log file=<path>|fd=<filedescriptor>[,level=n][,prefix=<prefix>]\n"
     "                 : write the TPM's log into the given file rather than\n"
     "                   to the console; provide '-' for path to avoid logging\n"
-    "                   log level 5 and higher will enable libtpms logging\n"
+    "                   log level 5 and higher will enable libtpms logging;\n"
+    "                   all logged output will be prefixed with prefix\n"
     "--key file=<path>[,mode=aes-cbc][,format=hex|binary][,remove=[true|false]]\n"
     "                 : use an AES key for the encryption of the TPM's state\n"
     "                   files; use the given mode for the block encryption;\n"
@@ -146,6 +154,7 @@ int swtpm_main(int argc, char **argv, const char *prgname, const char *iface)
     int opt, longindex;
     struct stat statbuf;
     struct mainLoopParams mlp = {
+        .cc = NULL,
         .flags = 0,
         .fd = -1,
     };
@@ -160,6 +169,8 @@ int swtpm_main(int argc, char **argv, const char *prgname, const char *iface)
     char *ctrlchdata = NULL;
     char *serverdata = NULL;
     char *runas = NULL;
+    int sock_type = 0;
+    socklen_t len = 0;
 #ifdef DEBUG
     time_t              start_time;
 #endif
@@ -168,7 +179,7 @@ int swtpm_main(int argc, char **argv, const char *prgname, const char *iface)
         {"help"      ,       no_argument, 0, 'h'},
         {"port"      , required_argument, 0, 'p'},
         {"fd"        , required_argument, 0, 'f'},
-        {"server"   , required_argument, 0, 'c'},
+        {"server"    , required_argument, 0, 'c'},
         {"runas"     , required_argument, 0, 'r'},
         {"terminate" ,       no_argument, 0, 't'},
         {"log"       , required_argument, 0, 'l'},
@@ -178,6 +189,8 @@ int swtpm_main(int argc, char **argv, const char *prgname, const char *iface)
         {"ctrl"      , required_argument, 0, 'C'},
         {NULL        , 0                , 0, 0  },
     };
+
+    log_set_prefix("swtpm: ");
 
     while (TRUE) {
         opt = getopt_long(argc, argv, "dhp:f:tr:", longopts, &longindex);
@@ -194,31 +207,35 @@ int swtpm_main(int argc, char **argv, const char *prgname, const char *iface)
             errno = 0;
             val = strtoul(optarg, &end_ptr, 0);
             if (val != (unsigned int)val || errno || end_ptr[0] != '\0') {
-                fprintf(stderr, "Cannot parse socket port number '%s'.\n",
-                        optarg);
+                logprintf(STDERR_FILENO,
+                          "Cannot parse socket port number '%s'.\n",
+                          optarg);
                 exit(1);
             }
             if (val >= 0x10000) {
-                fprintf(stderr, "Port is outside valid range.\n");
+                logprintf(STDERR_FILENO, "Port is outside valid range.\n");
                 exit(1);
             }
             snprintf(buf, sizeof(buf), "%lu", val);
             if (setenv("TPM_PORT", buf, 1) != 0) {
-                fprintf(stderr, "Could not set port: %s\n", strerror(errno));
+                logprintf(STDERR_FILENO,
+                          "Could not set port: %s\n", strerror(errno));
                 exit(1);
             }
             break;
 
         case 'f':
+            errno = 0;
             val = strtoul(optarg, &end_ptr, 10);
             if (val != (unsigned int)val || errno || end_ptr[0] != '\0') {
-                fprintf(stderr, "Cannot parse socket file descriptor.\n");
+                logprintf(STDERR_FILENO,
+                          "Cannot parse socket file descriptor.\n");
                 exit(1);
             }
             mlp.fd = val;
             if (fstat(mlp.fd, &statbuf) != 0) {
-                fprintf(stderr, "Cannot stat file descriptor: %s\n", 
-                        strerror(errno));
+                logprintf(STDERR_FILENO, "Cannot stat file descriptor: %s\n", 
+                          strerror(errno));
                 exit(1);
             }
             /*
@@ -227,11 +244,17 @@ int swtpm_main(int argc, char **argv, const char *prgname, const char *iface)
              */
             if (S_ISREG(statbuf.st_mode) || S_ISDIR(statbuf.st_mode) || S_ISBLK(statbuf.st_mode)
                 || S_ISLNK(statbuf.st_mode)) {
-                fprintf(stderr,
-                        "Given file descriptor type is not supported.\n");
+                logprintf(STDERR_FILENO,
+                          "Given file descriptor type is not supported.\n");
                 exit(1);
             }
-            mlp.flags |= MAIN_LOOP_FLAG_TERMINATE | MAIN_LOOP_FLAG_USE_FD;
+            mlp.flags |= MAIN_LOOP_FLAG_TERMINATE | MAIN_LOOP_FLAG_USE_FD |
+                         MAIN_LOOP_FLAG_KEEP_CONNECTION;
+
+            if (!getsockopt(mlp.fd, SOL_SOCKET, SO_TYPE, &sock_type, &len) &&
+                           sock_type != SOCK_STREAM)
+                mlp.flags |= MAIN_LOOP_FLAG_READALL;
+
             SWTPM_IO_SetSocketFD(mlp.fd);
 
             break;
@@ -289,8 +312,9 @@ int swtpm_main(int argc, char **argv, const char *prgname, const char *iface)
         handle_pid_options(piddata) < 0 ||
         handle_tpmstate_options(tpmstatedata) < 0 ||
         handle_ctrlchannel_options(ctrlchdata, &mlp.cc) < 0 ||
-        handle_server_options(serverdata, &server))
-        return EXIT_FAILURE;
+        handle_server_options(serverdata, &server)) {
+        goto exit_failure;
+    }
 
     if (server) {
         if (server_get_fd(server) >= 0) {
@@ -304,17 +328,24 @@ int swtpm_main(int argc, char **argv, const char *prgname, const char *iface)
 
         if ((server_get_flags(server) & SERVER_FLAG_FD_GIVEN))
             mlp.flags |= MAIN_LOOP_FLAG_TERMINATE | MAIN_LOOP_FLAG_USE_FD;
+
+        if (!getsockopt(mlp.fd, SOL_SOCKET, SO_TYPE, &sock_type, &len) &&
+                        sock_type != SOCK_STREAM)
+            mlp.flags |= MAIN_LOOP_FLAG_READALL;
+
+        free(server);
+        server = NULL;
     }
 
     if (daemonize) {
         if (0 != daemon(0, 0)) {
             logprintf(STDERR_FILENO, "Error: Could not daemonize.\n");
-            return EXIT_FAILURE;
+            goto exit_failure;
         }
     }
 
     if (pidfile_write(getpid()) < 0) {
-        return EXIT_FAILURE;
+        goto exit_failure;
     }
 
     setvbuf(stdout, 0, _IONBF, 0);      /* output may be going through pipe */
@@ -367,6 +398,9 @@ error_no_tpm:
     close(notify_fd[1]);
     notify_fd[1] = -1;
 
+    free(mlp.cc);
+    free(server);
+
     /* Fatal initialization errors cause the program to abort */
     if (rc == 0) {
         return EXIT_SUCCESS;
@@ -375,4 +409,10 @@ error_no_tpm:
         TPM_DEBUG("main: TPM initialization failure %08x, exiting\n", rc);
         return EXIT_FAILURE;
     }
+
+exit_failure:
+    free(mlp.cc);
+    free(server);
+
+    return EXIT_FAILURE;
 }

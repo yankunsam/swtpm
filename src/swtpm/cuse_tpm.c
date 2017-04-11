@@ -188,10 +188,11 @@ static const char *usage =
 "--migration-key pwdfile=<path>[,mode=aes-cbc][,remove=[true|false]]\n"
 "                    :  provide a passphrase in a file; the AES key will be\n"
 "                       derived from this passphrase\n"
-"--log file=<path>|fd=<filedescriptor>[,level=n]\n"
+"--log file=<path>|fd=<filedescriptor>[,level=n][,prefix=<prefix>]\n"
 "                    :  write the TPM's log into the given file rather than\n"
 "                       to the console; provide '-' for path to avoid logging\n"
-"                       log level 5 and higher will enable libtpms logging\n"
+"                       log level 5 and higher will enable libtpms logging;\n"
+"                       all logged output will be prefixed with prefix\n"
 "--pid file=<path>   :  write the process ID into the given file\n"
 "--tpmstate dir=<dir>\n"
 "                    :  set the directory where the TPM's state will be written\n"
@@ -1262,6 +1263,8 @@ int swtpm_cuse_main(int argc, char **argv, const char *prgname, const char *ifac
     memset(&cinfo, 0, sizeof(cinfo));
     memset(&param, 0, sizeof(param));
 
+    log_set_prefix("swtpm: ");
+
     while (true) {
         opt = getopt_long(argc, argv, "M:m:n:r:hv", longopts, &longindex);
 
@@ -1271,22 +1274,24 @@ int swtpm_cuse_main(int argc, char **argv, const char *prgname, const char *ifac
         switch (opt) {
         case 'M': /* major */
             if (sscanf(optarg, "%u", &num) != 1) {
-                fprintf(stderr, "Could not parse major number\n");
+                logprintf(STDERR_FILENO, "Could not parse major number\n");
                 return -1;
             }
             if (num > 65535) {
-                fprintf(stderr, "Major number outside valid range [0 - 65535]\n");
+                logprintf(STDERR_FILENO,
+                          "Major number outside valid range [0 - 65535]\n");
                 return -1;
             }
             cinfo.dev_major = num;
             break;
         case 'm': /* minor */
             if (sscanf(optarg, "%u", &num) != 1) {
-                fprintf(stderr, "Could not parse major number\n");
+                logprintf(STDERR_FILENO, "Could not parse major number\n");
                 return -1;
             }
             if (num > 65535) {
-                fprintf(stderr, "Major number outside valid range [0 - 65535]\n");
+                logprintf(STDERR_FILENO,
+                          "Major number outside valid range [0 - 65535]\n");
                 return -1;
             }
             cinfo.dev_minor = num;
@@ -1295,7 +1300,7 @@ int swtpm_cuse_main(int argc, char **argv, const char *prgname, const char *ifac
             if (!cinfo.dev_info_argc) {
                 cinfo_argv[0] = calloc(1, strlen("DEVNAME=") + strlen(optarg) + 1);
                 if (!cinfo_argv[0]) {
-                    fprintf(stderr, "Out of memory\n");
+                    logprintf(STDERR_FILENO, "Out of memory\n");
                     return -1;
                 }
                 devname = optarg;
@@ -1339,7 +1344,7 @@ int swtpm_cuse_main(int argc, char **argv, const char *prgname, const char *ifac
     }
 
     if (!cinfo.dev_info_argv) {
-        fprintf(stderr, "Error: device name missing\n");
+        logprintf(STDERR_FILENO, "Error: device name missing\n");
         return -2;
     }
 
@@ -1351,44 +1356,45 @@ int swtpm_cuse_main(int argc, char **argv, const char *prgname, const char *ifac
         return -3;
 
     if (setuid(0)) {
-        fprintf(stderr, "Error: Unable to setuid root. uid = %d, "
-                "euid = %d, gid = %d\n", getuid(), geteuid(), getgid());
+        logprintf(STDERR_FILENO, "Error: Unable to setuid root. uid = %d, "
+                  "euid = %d, gid = %d\n", getuid(), geteuid(), getgid());
         return -4;
     }
 
     if (param.runas) {
         if (!(passwd = getpwnam(param.runas))) {
-            fprintf(stderr, "User '%s' does not exist\n",
-                    param.runas);
+            logprintf(STDERR_FILENO, "User '%s' does not exist\n",
+                      param.runas);
             return -5;
         }
     }
 
     tpmdir = tpmstate_get_dir();
     if (tpmdir == NULL) {
-        fprintf(stderr,
-                "Error: No TPM state directory is defined; TPM_PATH is not set\n");
+        logprintf(STDERR_FILENO,
+                  "Error: No TPM state directory is defined; "
+                  "TPM_PATH is not set\n");
         return -1;
     }
 
     n = snprintf(path, sizeof(path), "/dev/%s", devname);
     if (n < 0) {
-        fprintf(stderr,
-                "Error: Could not create device file name\n");
+        logprintf(STDERR_FILENO,
+                  "Error: Could not create device file name\n");
         return -1;
     }
     if (n >= (int)sizeof(path)) {
-        fprintf(stderr,
-                "Error: Buffer too small to create device file name\n");
+        logprintf(STDERR_FILENO,
+                  "Error: Buffer too small to create device file name\n");
         return -1;
     }
 
     tpmfd = open(path, O_RDWR);
     if (tpmfd >= 0) {
         close(tpmfd);
-        fprintf(stderr,
-                "Error: A device '%s' already exists.\n",
-                path);
+        logprintf(STDERR_FILENO,
+                  "Error: A device '%s' already exists.\n",
+                  path);
         return -1;
     }
 
